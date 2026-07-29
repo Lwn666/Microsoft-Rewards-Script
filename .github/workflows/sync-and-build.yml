@@ -40,25 +40,32 @@ jobs:
             echo "update_msg=$MSG" >> $GITHUB_OUTPUT
           fi
 
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Build and push Docker image
-        if: steps.check.outputs.has_update == 'true'
-        uses: docker/build-push-action@v5
+        if: github.event_name == 'workflow_dispatch' || steps.check.outputs.has_update == 'true'
+        uses: docker/build-push-action@v6
         with:
           context: .
           push: true
           tags: |
             ghcr.io/${{ github.repository }}:latest
 
-      - name: PushPlus - 有更新
-        if: steps.check.outputs.has_update == 'true'
+      - name: PushPlus - 构建成功
+        if: (github.event_name == 'workflow_dispatch' || steps.check.outputs.has_update == 'true') && success()
         run: |
           curl -s -X POST "http://www.pushplus.plus/send" \
             -H "Content-Type: application/json" \
-            -d "{\"token\":\"${{ secrets.PUSHPLUS_TOKEN }}\",\"title\":\"✅ Microsoft-Rewards-Script 更新成功\",\"content\":\"${{ steps.check.outputs.update_msg }}\\n镜像已推送到 ghcr.io\"}"
+            -d "{\"token\":\"${{ secrets.PUSHPLUS_TOKEN }}\",\"title\":\"✅ Microsoft-Rewards-Script 构建成功\",\"content\":\"${{ steps.check.outputs.update_msg }}\\n镜像已推送 ghcr.io\"}"
 
       - name: PushPlus - 无需更新
-        if: steps.check.outputs.has_update == 'false'
+        if: github.event_name != 'workflow_dispatch' && steps.check.outputs.has_update == 'false'
         run: |
           curl -s -X POST "http://www.pushplus.plus/send" \
             -H "Content-Type: application/json" \
-            -d "{\"token\":\"${{ secrets.PUSHPLUS_TOKEN }}\",\"title\":\"🔄 Microsoft-Rewards-Script 检查完成\",\"content\":\"${{ steps.check.outputs.update_msg }}\\n无需更新，镜像无需重建\"}"
+            -d "{\"token\":\"${{ secrets.PUSHPLUS_TOKEN }}\",\"title\":\"🔄 Microsoft-Rewards-Script 检查完成\",\"content\":\"${{ steps.check.outputs.update_msg }}\\n镜像保持最新\"}"
