@@ -65,7 +65,7 @@ jobs:
           context: .
           push: true
           tags: |
-            ghcr.io/${{ github.repository }}:latest
+            ghcr.io/${{ github.repository | tolower }}:latest
 
       - name: PushPlus 推送 - 有更新或手动构建
         if: steps.build.outputs.build_needed == 'true' && steps.docker.outcome == 'success'
