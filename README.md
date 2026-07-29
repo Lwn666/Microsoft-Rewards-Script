@@ -489,3 +489,50 @@ docker compose up -d --build
 **风险自负！** 使用自动化脚本时，您的 Microsoft Rewards 账户可能会被暂停或禁止。
 
 此脚本仅供教育目的。作者对 Microsoft 采取的任何账户操作不承担责任。
+
+
+---
+
+## 🔄 本 Fork 自动更新说明
+
+本 Fork 配置了 **GitHub Actions 自动同步 + Docker 镜像构建**，每天自动检测上游更新并构建镜像。
+
+### 工作流程
+
+1. 每日 3:00 UTC → GitHub Actions 检查上游更新
+2. 有更新 → 自动拉取代码 → 构建 Docker 镜像 → 推送到 ghcr.io
+3. 无更新 → 跳过构建
+4. 每次运行结果 → PushPlus 微信推送通知
+
+### 自动更新机制
+
+| 触发方式 | 行为 |
+|---------|------|
+| 定时触发（每日 3:00 UTC） | 自动检查上游更新，如有更新则拉取并构建 |
+| 手动触发 | 通过 Actions 页面点击 Run workflow，始终构建 |
+
+### 一键拉取 & 运行
+
+```
+# 创建目录
+mkdir -p bing_v2/{config,sessions,browser/sessions}
+
+# 创建 compose.yaml 启动
+docker compose -f bing_v2/compose.yaml up -d
+
+# 查看日志
+docker logs -f microsoft-rewards-script
+```
+
+### 更新容器（当有新镜像时）
+
+```
+docker compose -f bing_v2/compose.yaml pull
+docker compose -f bing_v2/compose.yaml up -d
+```
+
+### 镜像地址
+
+```
+ghcr.io/lwn666/microsoft-rewards-script:latest
+```
