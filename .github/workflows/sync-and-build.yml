@@ -49,6 +49,11 @@ jobs:
             echo "Scheduled run with no updates - skip build"
           fi
 
+      - name: Get lowercase repo name
+        id: repo
+        run: |
+          echo "lower_repo=$(echo ${{ github.repository }} | tr 'A-Z' 'a-z')" >> "$GITHUB_OUTPUT"
+
       - name: Log in to GitHub Container Registry
         if: steps.build.outputs.build_needed == 'true'
         uses: docker/login-action@v3
@@ -65,7 +70,7 @@ jobs:
           context: .
           push: true
           tags: |
-            ghcr.io/${{ github.repository | tolower }}:latest
+            ghcr.io/${{ steps.repo.outputs.lower_repo }}:latest
 
       - name: PushPlus 推送 - 有更新或手动构建
         if: steps.build.outputs.build_needed == 'true' && steps.docker.outcome == 'success'
