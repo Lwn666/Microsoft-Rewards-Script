@@ -9,9 +9,6 @@ permissions:
 jobs:
   sync-and-build:
     runs-on: ubuntu-latest
-    outputs:
-      has_update: ${{ steps.check.outputs.has_update }}
-      update_msg: ${{ steps.check.outputs.update_msg }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -19,28 +16,41 @@ jobs:
           fetch-depth: 0
 
       - name: Sync upstream
+        id: sync
         run: |
           git remote add upstream https://github.com/chiihero/Microsoft-Rewards-Script.git
           git fetch upstream main
           git checkout main
-          git merge upstream/main --no-edit --allow-unrelated-histories || true
-          git push origin main || true
-        continue-on-error: true
-
-      - name: Check for updates
-        id: check
-        run: |
-          DIFF=$(git log HEAD..upstream/main --oneline 2>/dev/null)
-          if [ -z "$DIFF" ]; then
-            echo "has_update=false" >> $GITHUB_OUTPUT
-            echo "update_msg=当前已是最新版本，无需更新" >> $GITHUB_OUTPUT
+          UPDATED=false
+          if git diff --quiet HEAD upstream/main; then
+            echo "has_update=false" >> "$GITHUB_OUTPUT"
+            echo "update_msg=当前已是最新版本，无需更新" >> "$GITHUB_OUTPUT"
           else
-            echo "has_update=true" >> $GITHUB_OUTPUT
-            MSG="发现上游更新，已同步：$(echo "$DIFF" | head -5 | tr '\n' '; ')"
-            echo "update_msg=$MSG" >> $GITHUB_OUTPUT
+            git merge upstream/main --no-edit --allow-unrelated-histories
+            git push origin main
+            echo "has_update=true" >> "$GITHUB_OUTPUT"
+            echo "update_msg=发现上游更新，已同步" >> "$GITHUB_OUTPUT"
+            UPDATED=true
+          fi
+
+      - name: Determine build needed
+        id: build
+        run: |
+          # Manual trigger: always build
+          # Scheduled trigger: only build if upstream has updates
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "build_needed=true" >> "$GITHUB_OUTPUT"
+            echo "Manual trigger - will always build"
+          elif [ "${{ steps.sync.outputs.has_update }}" = "true" ]; then
+            echo "build_needed=true" >> "$GITHUB_OUTPUT"
+            echo "Upstream updated - will build"
+          else
+            echo "build_needed=false" >> "$GITHUB_OUTPUT"
+            echo "Scheduled run with no updates - skip build"
           fi
 
       - name: Log in to GitHub Container Registry
+        if: steps.build.outputs.build_needed == 'true'
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
@@ -48,7 +58,8 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and push Docker image
-        if: github.event_name == 'workflow_dispatch' || steps.check.outputs.has_update == 'true'
+        if: steps.build.outputs.build_needed == 'true'
+        id: docker
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -56,16 +67,41 @@ jobs:
           tags: |
             ghcr.io/${{ github.repository }}:latest
 
-      - name: PushPlus - 构建成功
-        if: (github.event_name == 'workflow_dispatch' || steps.check.outputs.has_update == 'true') && success()
+      - name: PushPlus 推送 - 有更新或手动构建
+        if: steps.build.outputs.build_needed == 'true' && steps.docker.outcome == 'success'
         run: |
+          if [ -z "$PUSHPLUS_TOKEN" ]; then
+            echo "No PUSHPLUS_TOKEN configured, skipping notification"
+            exit 0
+          fi
+          TITLE="Microsoft-Rewards-Script ✅ 更新构建成功"
+          CONTENT="${{ steps.sync.outputs.update_msg }}\\n镜像已推送至 ghcr.io"
           curl -s -X POST "http://www.pushplus.plus/send" \
             -H "Content-Type: application/json" \
-            -d "{\"token\":\"${{ secrets.PUSHPLUS_TOKEN }}\",\"title\":\"✅ Microsoft-Rewards-Script 构建成功\",\"content\":\"${{ steps.check.outputs.update_msg }}\\n镜像已推送 ghcr.io\"}"
+            -d "{\"token\":\"$PUSHPLUS_TOKEN\",\"title\":\"$TITLE\",\"content\":\"$CONTENT\"}"
 
-      - name: PushPlus - 无需更新
-        if: github.event_name != 'workflow_dispatch' && steps.check.outputs.has_update == 'false'
+      - name: PushPlus 推送 - 无更新
+        if: steps.build.outputs.build_needed == 'false'
         run: |
+          if [ -z "$PUSHPLUS_TOKEN" ]; then
+            echo "No PUSHPLUS_TOKEN configured, skipping notification"
+            exit 0
+          fi
+          TITLE="Microsoft-Rewards-Script 检查完成"
+          CONTENT="${{ steps.sync.outputs.update_msg }}"
           curl -s -X POST "http://www.pushplus.plus/send" \
             -H "Content-Type: application/json" \
-            -d "{\"token\":\"${{ secrets.PUSHPLUS_TOKEN }}\",\"title\":\"🔄 Microsoft-Rewards-Script 检查完成\",\"content\":\"${{ steps.check.outputs.update_msg }}\\n镜像保持最新\"}"
+            -d "{\"token\":\"$PUSHPLUS_TOKEN\",\"title\":\"$TITLE\",\"content\":\"$CONTENT\"}"
+
+      - name: PushPlus 推送 - 构建失败
+        if: steps.build.outputs.build_needed == 'true' && steps.docker.outcome == 'failure'
+        run: |
+          if [ -z "$PUSHPLUS_TOKEN" ]; then
+            echo "No PUSHPLUS_TOKEN configured, skipping notification"
+            exit 0
+          fi
+          TITLE="Microsoft-Rewards-Script ❌ 构建失败"
+          CONTENT="Docker 镜像构建失败，请检查 GitHub Actions 日志"
+          curl -s -X POST "http://www.pushplus.plus/send" \
+            -H "Content-Type: application/json" \
+            -d "{\"token\":\"$PUSHPLUS_TOKEN\",\"title\":\"$TITLE\",\"content\":\"$CONTENT\"}"
