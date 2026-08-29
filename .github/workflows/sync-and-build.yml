@@ -22,7 +22,7 @@ jobs:
           git fetch upstream main
           git checkout main
           UPDATED=false
-          if git diff --quiet HEAD upstream/main; then
+          if [ "$(git rev-list --count HEAD..upstream/main)" -eq 0 ]; then
             echo "has_update=false" >> "$GITHUB_OUTPUT"
             echo "update_msg=当前已是最新版本，无需更新" >> "$GITHUB_OUTPUT"
           else
