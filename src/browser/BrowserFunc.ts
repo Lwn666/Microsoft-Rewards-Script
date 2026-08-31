@@ -527,19 +527,17 @@ export default class BrowserFunc {
     }
 
     buildCookieHeader(cookies: Cookie[], allowedDomains?: string[]): string {
-        return [
-            ...new Map(
-                cookies
-                    .filter(c => {
-                        if (!allowedDomains || allowedDomains.length === 0) return true
-                        return (
-                            typeof c.domain === 'string' &&
-                            allowedDomains.some(d => c.domain.toLowerCase().endsWith(d.toLowerCase()))
-                        )
-                    })
-                    .map(c => [c.name, c])
-            ).values()
-        ]
+        // 注意：不能按 cookie 名去重 —— 同名 cookie 可能存在于多个域（如 MUID@.bing.com 与 MUID@.live.com、
+        // _C_Auth@www.bing.com 等），浏览器发送时会同时携带所有域的副本，服务端取匹配域的实例。
+        // 旧实现用 Map 按 name 去重只保留最后一个，会把正确域的副本丢掉，导致 getuserinfo 等接口 404。
+        return cookies
+            .filter(c => {
+                if (!allowedDomains || allowedDomains.length === 0) return true
+                return (
+                    typeof c.domain === 'string' &&
+                    allowedDomains.some(d => c.domain.toLowerCase().endsWith(d.toLowerCase()))
+                )
+            })
             .map(c => `${c.name}=${c.value}`)
             .join('; ')
     }
