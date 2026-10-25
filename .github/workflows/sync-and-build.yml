@@ -1,0 +1,111 @@
+name: Sync Upstream V4 and Build Docker
+
+on:
+    schedule:
+        - cron: '0 3 * * *'
+    workflow_dispatch:
+
+permissions:
+    contents: write
+    packages: write
+
+env:
+    UPSTREAM_REPO: chiihero/Microsoft-Rewards-Script
+    UPSTREAM_BRANCH: V4-china
+
+jobs:
+    sync-and-build:
+        runs-on: ubuntu-latest
+        steps:
+            - name: Checkout
+              uses: actions/checkout@v4
+              with:
+                  fetch-depth: 0
+
+            - name: Sync upstream V4
+              id: sync
+              run: |
+                  set -euo pipefail
+                  git config user.name "github-actions[bot]"
+                  git config user.email "github-actions[bot]@users.noreply.github.com"
+                  git remote add upstream "https://github.com/${UPSTREAM_REPO}.git" 2>/dev/null || true
+                  git fetch --prune upstream "$UPSTREAM_BRANCH"
+                  BEHIND=$(git rev-list --count HEAD..FETCH_HEAD)
+                  echo "behind=$BEHIND"
+                  if [ "$BEHIND" -eq 0 ]; then
+                      echo "has_update=false" >> "$GITHUB_OUTPUT"
+                      echo "update_msg=当前已是最新版本（上游 V4-china 落后 0 提交），无需更新" >> "$GITHUB_OUTPUT"
+                  else
+                      git merge --no-edit --no-ff FETCH_HEAD
+                      git push origin "HEAD:${GITHUB_REF_NAME}"
+                      echo "has_update=true" >> "$GITHUB_OUTPUT"
+                      echo "update_msg=上游 V4-china 有 ${BEHIND} 个新提交，已同步" >> "$GITHUB_OUTPUT"
+                  fi
+
+            - name: Keepalive
+              run: |
+                  set -euo pipefail
+                  git fetch --quiet origin "${GITHUB_REF_NAME}" || true
+                  LAST=$(git log -1 --format=%ct "origin/${GITHUB_REF_NAME}" 2>/dev/null || git log -1 --format=%ct)
+                  DAYS=$(( ( $(date +%s) - LAST ) / 86400 ))
+                  echo "距上次提交 ${DAYS} 天"
+                  if [ "$DAYS" -ge 30 ]; then
+                      git config user.name "github-actions[bot]"
+                      git config user.email "github-actions[bot]@users.noreply.github.com"
+                      git commit --allow-empty -m "chore: keepalive $(date -u +%F)（保持定时工作流不被 60 天规则禁用）"
+                      git push origin "HEAD:${GITHUB_REF_NAME}"
+                      echo "已推送保活提交，活动计时重置"
+                  fi
+
+            - name: Decide build
+              id: build
+              run: |
+                  set -euo pipefail
+                  if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+                      echo "needed=true" >> "$GITHUB_OUTPUT"
+                  elif [ "${{ steps.sync.outputs.has_update }}" = "true" ]; then
+                      echo "needed=true" >> "$GITHUB_OUTPUT"
+                  else
+                      echo "needed=false" >> "$GITHUB_OUTPUT"
+                  fi
+
+            - name: Log in to GHCR
+              if: steps.build.outputs.needed == 'true'
+              uses: docker/login-action@v3
+              with:
+                  registry: ghcr.io
+                  username: ${{ github.actor }}
+                  password: ${{ secrets.GITHUB_TOKEN }}
+
+            - name: Build and push Docker image
+              id: docker
+              if: steps.build.outputs.needed == 'true'
+              uses: docker/build-push-action@v6
+              with:
+                  context: .
+                  push: true
+                  tags: ghcr.io/${{ github.repository_owner }}/microsoft-rewards-script:latest
+
+            - name: Notify - built
+              if: steps.build.outputs.needed == 'true' && steps.docker.outcome == 'success'
+              run: |
+                  [ -z "${PUSHPLUS_TOKEN:-}" ] && { echo "no PUSHPLUS_TOKEN, skip"; exit 0; }
+                  curl -s -X POST "http://www.pushplus.plus/send" \
+                    -H "Content-Type: application/json" \
+                    -d "{\"token\":\"$PUSHPLUS_TOKEN\",\"title\":\"Rewards V4 同步并构建成功\",\"content\":\"${{ steps.sync.outputs.update_msg }}\\n镜像 ghcr.io/${{ github.repository_owner }}/microsoft-rewards-script:latest 已推送\"}"
+
+            - name: Notify - no update
+              if: steps.build.outputs.needed == 'false'
+              run: |
+                  [ -z "${PUSHPLUS_TOKEN:-}" ] && { echo "no PUSHPLUS_TOKEN, skip"; exit 0; }
+                  curl -s -X POST "http://www.pushplus.plus/send" \
+                    -H "Content-Type: application/json" \
+                    -d "{\"token\":\"$PUSHPLUS_TOKEN\",\"title\":\"Rewards V4 检查完成\",\"content\":\"${{ steps.sync.outputs.update_msg }}\"}"
+
+            - name: Notify - build failed
+              if: steps.build.outputs.needed == 'true' && steps.docker.outcome == 'failure'
+              run: |
+                  [ -z "${PUSHPLUS_TOKEN:-}" ] && { echo "no PUSHPLUS_TOKEN, skip"; exit 0; }
+                  curl -s -X POST "http://www.pushplus.plus/send" \
+                    -H "Content-Type: application/json" \
+                    -d "{\"token\":\"$PUSHPLUS_TOKEN\",\"title\":\"Rewards V4 构建失败\",\"content\":\"Docker 镜像构建失败，请查看 Actions 日志\"}"
