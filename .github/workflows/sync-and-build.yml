@@ -107,7 +107,7 @@ jobs:
                     -d "{\"token\":\"$PUSHPLUS_TOKEN\",\"title\":\"Rewards V4 检查完成\",\"content\":\"${{ steps.sync.outputs.update_msg }}\"}"
 
             - name: Notify - build failed
-              if: steps.build.outputs.needed == 'true' && steps.docker.outcome == 'failure'
+              if: failure()
               run: |
                   [ -z "${PUSHPLUS_TOKEN:-}" ] && { echo "no PUSHPLUS_TOKEN, skip"; exit 0; }
                   curl -s -X POST "http://www.pushplus.plus/send" \
